@@ -12,6 +12,8 @@ set -e
 SIEM_IP="${1:-$(hostname -I | awk '{print $1}')}"
 RAY_DIR="/opt/ray-axis"
 CERTS_DIR="$RAY_DIR/certs"
+# Résoudre le chemin absolu du script AVANT tout cd
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 GREEN='\033[0;32m'; BLUE='\033[0;34m'; YELLOW='\033[0;33m'; NC='\033[0m'
 info(){ echo -e "${BLUE}[SETUP]${NC} $1"; }
@@ -83,7 +85,6 @@ cp "$CERTS_DIR/siem.key" /etc/nginx/ssl/
 
 # ── 3. Nginx reverse proxy HTTPS ─────────────────────────────
 info "Configuration Nginx HTTPS pour Ray-Axis..."
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cp "$SCRIPT_DIR/nginx-siem.conf" /etc/nginx/sites-available/ray-axis
 ln -sf /etc/nginx/sites-available/ray-axis /etc/nginx/sites-enabled/ray-axis
 rm -f /etc/nginx/sites-enabled/default
