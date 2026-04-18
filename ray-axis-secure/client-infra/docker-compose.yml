@@ -1,31 +1,27 @@
-version: "3.9"
-
 # ================================================================
 # Ray-Axis — Infrastructure client surveillée
 # Stack : Nginx + Node.js + MySQL + Filebeat
 # 3 réseaux isolés : frontend / backend / monitoring
 #
 # Usage :
-#   SIEM_HOST=<IP-VM-KALI> docker-compose up -d
+#   $env:SIEM_HOST="10.1.0.152"; docker-compose up -d   (PowerShell)
+#   SIEM_HOST=10.1.0.152 docker-compose up -d            (bash)
 # ================================================================
 
 networks:
-  # Réseau public — Nginx uniquement exposé
   net-frontend:
     driver: bridge
     ipam:
       config:
         - subnet: 172.20.1.0/24
 
-  # Réseau interne — App ↔ DB uniquement
   net-backend:
     driver: bridge
-    internal: true          # Pas d'accès internet depuis ce réseau
+    internal: true
     ipam:
       config:
         - subnet: 172.20.2.0/24
 
-  # Réseau monitoring — Filebeat → SIEM uniquement
   net-monitoring:
     driver: bridge
     ipam:
@@ -39,35 +35,22 @@ volumes:
 
 services:
 
-  # ── Nginx — reverse proxy web ────────────────────────────────
+  # ── Nginx ────────────────────────────────────────────────────
   nginx:
     image: nginx:1.25-alpine
     container_name: client-nginx
     restart: unless-stopped
     ports:
       - "80:80"
-      - "443:443"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/ssl:/etc/nginx/ssl:ro
       - nginx-logs:/var/log/nginx
     networks:
       - net-frontend
     depends_on:
       - app
-    healthcheck:
-      test: ["CMD", "nginx", "-t"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-    # Pas d'accès réseau backend — Nginx ne voit pas la DB
     security_opt:
       - no-new-privileges:true
-    read_only: true
-    tmpfs:
-      - /var/cache/nginx
-      - /var/run
-      - /tmp
 
   # ── Application Node.js ──────────────────────────────────────
   app:
@@ -86,15 +69,13 @@ services:
     volumes:
       - app-logs:/app/logs
     networks:
-      - net-frontend   # Reçoit les requêtes de Nginx
-      - net-backend    # Parle à la DB
+      - net-frontend
+      - net-backend
     depends_on:
       db:
         condition: service_healthy
     security_opt:
       - no-new-privileges:true
-    # L'app ne peut pas accéder à internet (net-backend est internal)
-    # Elle est joignable depuis net-frontend via Nginx uniquement
 
   # ── MySQL ────────────────────────────────────────────────────
   db:
@@ -109,42 +90,40 @@ services:
     volumes:
       - mysql-data:/var/lib/mysql
       - ./mysql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
-      - ./mysql/mysql-audit.cnf:/etc/mysql/conf.d/audit.cnf:ro
+      # mysql-audit.cnf retiré — cause des warnings "world-writable" sous Windows
+      # À remettre sur Linux : - ./mysql/mysql-audit.cnf:/etc/mysql/conf.d/audit.cnf:ro
     networks:
-      - net-backend    # Uniquement joignable par l'app
-    # Aucun port exposé à l'hôte — DB totalement interne
+      - net-backend
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-rootchangeme}"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD:-rootchangeme}"]
       interval: 10s
       timeout: 5s
       retries: 5
-    security_opt:
-      - no-new-privileges:true
+      start_period: 30s
     cap_drop:
-      - ALL
+      - NET_ADMIN
+      - SYS_ADMIN
     cap_add:
+      - DAC_OVERRIDE
       - CHOWN
       - SETUID
       - SETGID
 
-  # ── Filebeat — agent de collecte logs ────────────────────────
+  # ── Filebeat ─────────────────────────────────────────────────
   filebeat:
     image: docker.elastic.co/beats/filebeat:8.11.0
     container_name: client-filebeat
     restart: unless-stopped
-    user: root   # Nécessaire pour lire les volumes de logs
+    user: root
     environment:
       - SIEM_HOST=${SIEM_HOST:-localhost}
       - SIEM_PORT=${SIEM_PORT:-5044}
     volumes:
       - ./filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
-      - ./certs:/etc/filebeat/certs:ro
       - nginx-logs:/var/log/nginx:ro
       - app-logs:/var/log/app:ro
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
-      - net-monitoring  # Uniquement accès vers le SIEM
+      - net-monitoring
     depends_on:
       - nginx
       - app
@@ -152,15 +131,13 @@ services:
       - no-new-privileges:true
     command: filebeat -e --strict.perms=false
 
-  # ── Attaquant (Kali tools) — réseau frontend uniquement ──────
+  # ── Attaquant (profil séparé) ─────────────────────────────────
   attacker:
     image: kalilinux/kali-rolling
     container_name: client-attacker
     restart: "no"
     profiles:
-      - attack   # Démarré seulement avec : docker-compose --profile attack up attacker
+      - attack
     networks:
-      - net-frontend   # Voit uniquement Nginx — pas la DB, pas le monitoring
+      - net-frontend
     entrypoint: ["/bin/bash", "-c", "apt-get update -qq && apt-get install -y nmap hydra nikto sqlmap curl -qq && sleep infinity"]
-    security_opt:
-      - no-new-privileges:true
