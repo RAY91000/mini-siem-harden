@@ -1,0 +1,112 @@
+# ================================================================
+# Ray-Axis SIEM — Configuration
+# Modifiez ce fichier selon votre environnement.
+# Les valeurs non définies ici utilisent les défauts de config.py
+# ================================================================
+
+# ── Sources de logs locaux ──────────────────────────────────────
+log_sources:
+  - path: /var/log/auth.log
+    type: auth
+    enabled: true
+
+  - path: /var/log/syslog
+    type: syslog
+    enabled: true
+
+  - path: /var/log/nginx/access.log
+    type: nginx
+    enabled: false   # Passer à true si Nginx est installé
+
+  - path: /var/log/apache2/access.log
+    type: apache
+    enabled: false   # Passer à true si Apache est installé
+
+# ── Journald ────────────────────────────────────────────────────
+journald:
+  enabled: true
+  units:
+    - sshd
+    - sudo
+    - cron
+
+# ── Réception Filebeat réseau ───────────────────────────────────
+# Activer quand Docker Desktop est configuré sur Windows
+beats_input:
+  enabled: false       # Passer à true pour recevoir les logs Docker
+  host: 0.0.0.0
+  port: 5044
+  # Activer après setup_security.sh :
+  # tls_cert: /opt/ray-axis/certs/siem.crt
+  # tls_key:  /opt/ray-axis/certs/siem.key
+  # tls_ca:   /opt/ray-axis/certs/ca.crt
+  # mtls: true
+
+# ── Enrichissement ──────────────────────────────────────────────
+enricher:
+  geoip:
+    enabled: false
+    db_path: /usr/share/GeoIP/GeoLite2-City.mmdb
+    # Installation : pip install geoip2
+    # Base GeoLite2 : https://dev.maxmind.com/geoip/geolite2-free-geolocation-data
+
+  threat_intel:
+    enabled: false
+    cache_ttl_seconds: 3600
+    blocklists:
+      - https://raw.githubusercontent.com/stamparm/ipsum/master/ipsum.txt
+      - https://lists.blocklist.de/lists/ssh.txt
+
+# ── Réponse automatisée ─────────────────────────────────────────
+responder:
+  auto_block_ip:
+    enabled: false     # true pour bloquer via iptables
+    severities:
+      - critical
+    whitelist:
+      - 127.0.0.1
+      - 10.0.0.0/8
+      - 192.168.0.0/16
+      - 172.16.0.0/12
+
+  webhook:
+    enabled: false
+    url: ""
+    # Slack   : https://hooks.slack.com/services/XXX/YYY/ZZZ
+    # Discord : https://discord.com/api/webhooks/XXX/YYY
+    min_severity: high
+
+# ── Alertes ─────────────────────────────────────────────────────
+alerter:
+  terminal:
+    enabled: true
+    colors: true
+
+  file:
+    enabled: true
+    path: /var/log/ray-axis/alerts.log
+
+  email:
+    enabled: false
+    smtp_host: smtp.gmail.com
+    smtp_port: 587
+    smtp_user: votre@gmail.com
+    smtp_password: mot-de-passe-application
+    from: votre@gmail.com
+    to:
+      - admin@example.com
+    min_severity: high
+
+# ── Stockage ────────────────────────────────────────────────────
+storage:
+  db_path: /var/lib/ray-axis/events.db
+  max_events: 200000
+  max_alerts: 100000
+
+# ── Dashboard ───────────────────────────────────────────────────
+dashboard:
+  enabled: true
+  host: 0.0.0.0
+  port: 5000
+  secret_key: changez-cette-cle-en-production
+  auth: false   # Passer à true après setup_security.sh
